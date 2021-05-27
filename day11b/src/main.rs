@@ -5,6 +5,12 @@ use std::io::Read;
 const ELEMS: u32 = 7;
 const ITEMS: u32 = ELEMS * 2;
 
+fn insert(state: u32, len: u32, val: u32) -> u32 {
+    let pos = (0..len).find(|x| state >> x * 4 & 0xF <= val).unwrap_or(len);
+    let mask = !0 << pos * 4;
+    state & !mask | (state & mask) << 4 | val << (pos * 4)
+}
+
 fn get_neighbors(state: u32, neighbors: &mut Vec<u32>) {
     let elevator_pos = state >> (ITEMS * 2);
     let at_curr: Vec<_> = (0..ITEMS).filter(|&x| state >> x * 2 & 0b11 == elevator_pos).collect();
@@ -19,12 +25,31 @@ fn get_neighbors(state: u32, neighbors: &mut Vec<u32>) {
             for &k in &at_curr {
                 let new_state = (new_el_state & !(0b11 << j * 2) | i << j * 2)
                     & !(0b11 << k * 2) | i << k * 2;
-                if (0..ELEMS).all(|x| {
-                    let pos = new_state >> (x + ELEMS) * 2 & 0b11;
-                    new_state >> x * 2 & 0b11 == pos || (0..ELEMS).all(|y| new_state >> y * 2 & 0b11 != pos)
+
+                if !(0..ELEMS).all(|x| {
+                    let chip_floor = new_state >> x * 4 + 2 & 0xF;
+                    new_state >> x * 4 & 0b11 == chip_floor || (0..ELEMS).all(|y| new_state >> y * 4 & 0b11 != chip_floor)
                 }) {
-                    neighbors.push(new_state);
+                    continue;
                 }
+
+                let pos_a = j >> 1;
+                let pos_b = k >> 1;
+                let a = new_state >> pos_a * 4 & 0xF;
+                let b = new_state >> pos_b * 4 & 0xF;
+                let mask_a = !0 << pos_a * 4;
+                let new_state = new_state & !mask_a | (new_state & mask_a << 4) >> 4;
+                let new_state = if pos_a == pos_b {
+                    insert(new_state, ELEMS - 1, a)
+                } else {
+                    let pos_b = if pos_b > pos_a { pos_b - 1 } else { pos_b };
+                    let mask_b = !0 << pos_b * 4;
+                    let new_state = new_state & !mask_b | (new_state & mask_b << 4) >> 4;
+                    let new_state = insert(new_state, ELEMS - 2, a);
+                    insert(new_state, ELEMS - 1, b)
+                };
+
+                neighbors.push(new_state);
             }
         }
     }
@@ -49,10 +74,10 @@ fn main() {
             word
         });
         for i in generators {
-            elements.entry(i).or_insert((0, 0)).0 = floor as u32;
+            elements.entry(i).or_insert((0, 0)).1 = floor as u32;
         }
         for i in chips {
-            elements.entry(i).or_insert((0, 0)).1 = floor as u32;
+            elements.entry(i).or_insert((0, 0)).0 = floor as u32;
         }
     }
 
@@ -60,8 +85,11 @@ fn main() {
         (0..ITEMS).map(|x| 0b11 - (state >> x * 2 & 0b11)).sum::<u32>() / 2
     };
 
-    let start = elements.into_iter().enumerate().fold(0, |acc, (n, (_, floors))| {
-        acc | floors.0 << n * 2 | floors.1 << (ELEMS + n as u32) * 2
+    let mut elements: Vec<_> = elements.values().copied().collect();
+    elements.sort_unstable();
+
+    let start = elements.into_iter().enumerate().fold(0, |acc, (n, floors)| {
+        acc | floors.1 << n * 4 | floors.0 << n * 4 + 2
     });
 
     let end = (0..ITEMS + 1).fold(0, |acc, x| acc | 0b11 << x * 2);
